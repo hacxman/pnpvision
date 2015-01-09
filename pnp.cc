@@ -13,9 +13,9 @@ class Machine {
     float x,y,z;
     float sx, sy, sz;
 
-    Rect cam_rect;
     Rect b_pos;
   public:
+    Rect cam_rect;
     vector<Point2f> points;
     vector<Point2f> points2;
     float dpiX, dpiY;
@@ -31,7 +31,7 @@ class Machine {
     Point2f getPos() {return Point2f(x,y); };
 
     void renderMachine() {
-      int dpi = 25;
+      int dpi = 35;
       Mat mach = Mat::zeros(sx*dpi/2.54, sy*dpi/2.54, board.type());
       float bsx = (dpi / 2.54) / (board.size().width / b_pos.width);
       float bsy = (dpi / 2.54) / (board.size().height / b_pos.height);
@@ -39,23 +39,29 @@ class Machine {
          b_pos.width * dpi/2.54, b_pos.height * dpi/2.54 );
       Mat destRoi = mach(roi);
       Mat resized_board;
-      resize(board, resized_board, 
-          Size(board.size().width*bsx, board.size().height*bsy), 0.5,0.5, INTER_CUBIC);
+      resize(board, resized_board,
+          Size(board.size().width*bsx, board.size().height*bsy), 0,0, INTER_CUBIC);
 
       resized_board.copyTo(destRoi);
       cvtColor(mach, mach, CV_GRAY2RGB);
 
       for (auto it = points2.begin(); it != points2.end(); it++) {
         Point2i p(((*it).x) * dpi/2.54, (*it).y * dpi/2.54);
-        line(mach, p, p, Scalar(255,0,0));
+        auto _ii = it; _ii++;
+        if (_ii==points2.end()) _ii=it;
+        line(mach, (*(_ii))*(dpi/2.54), p, Scalar(255,0,0));
       }
       if (points.size()>500000) points.erase(points.begin());
       if (points2.size()>500000) points2.erase(points2.begin());
       for (auto it = points.begin(); it != points.end(); it++) {
         Point2i p(((*it).x) * dpi/2.54, (*it).y * dpi/2.54);
-        line(mach, p, p, Scalar(0,0,255));
+        auto _ii = it; _ii++;
+        if (_ii==points.end()) _ii=it;
+        line(mach, (*(_ii))*(dpi/2.54), p, Scalar(0,0,255));
       }
 
+      line(mach, Point2f(x*dpi/2.54, 0), Point2f(x*dpi/2.54, y*dpi/2.54), Scalar(255,0,255));
+      line(mach, Point2f(0, y*dpi/2.54), Point2f(x*dpi/2.54, y*dpi/2.54), Scalar(255,0,255));
       circle(mach, Point2f(x*dpi/2.54, y*dpi/2.54), 3, Scalar(255,0,255));
       imshow("machine", mach);
       //waitKey();
@@ -75,30 +81,38 @@ class Machine {
 //      return o;
 //    }
 
-    Mat getCamFrame() {
+    Mat getFrameAt(float posx, float posy) {
       int c_s_x = cam_rect.width * (board.size().width / b_pos.width);
       int c_s_y = cam_rect.height * (board.size().height / b_pos.height);
-      int o_s_x = cam_rect.width * dpiX;
-      int o_s_y = cam_rect.height * dpiY;
+      int o_s_x = cam_rect.width * dpiX / 2.54;
+      int o_s_y = cam_rect.height * dpiY / 2.54;
       Mat src = board;
 //      cout << c_s_x << " " << c_s_y << endl;
 //      cout << o_s_x << " " << o_s_y << endl;
       Mat warp_dst = Mat::zeros( c_s_x, c_s_y, src.type() );
       Mat warp_out = Mat::zeros( o_s_x, o_s_y, src.type() );
-      Point2f pt_center = Point2f(board.size().width/b_pos.width * (x - b_pos.x), board.size().height/b_pos.height * (y - b_pos.y));
+      Point2f pt_center = Point2f(board.size().width/b_pos.width * (posx - b_pos.x), board.size().height/b_pos.height * (posy - b_pos.y));
       cout << pt_center <<endl;
       getRectSubPix(board, Size(c_s_x, c_s_y), pt_center, warp_dst);
       resize(warp_dst, warp_out, Size(o_s_x, o_s_y), 0,0, INTER_CUBIC);
 
       return warp_out;
     }
+
+    Mat getCamFrame() {
+      return getFrameAt(x,y);
+    }
     void goCenter() {x=sx/2; y=sy/2;};
 };
 
 int main(int argc, char *argv[]) {
   //start in center, in 1m^3
-  Machine m = Machine(57,55,50, 100, 100, 100, Rect(-1, 1, 2, 2));
-  Point2f my_pos(57, 55);
+  srand(time(0));
+  float __r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+  float __r2 = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+  Machine m = Machine(57+(__r*3),55+(__r2*3),50, 100, 100, 100, Rect(-1, 1, 2, 2));
+  //Point2f my_pos(m.getPos().x, m.getPos().y);
+  Point2f my_pos(-1,-1);
   Mat src_gray, src = imread(argv[1], 1);
 
   cvtColor(src, src_gray, CV_BGR2GRAY);
@@ -106,7 +120,6 @@ int main(int argc, char *argv[]) {
   m.addBoard(src_gray, board_rect);
 
 //  namedWindow( source_window, CV_WINDOW_AUTOSIZE );
-
 
   Mat old_frame;
   Point2f g(1,0);
@@ -123,9 +136,21 @@ int main(int argc, char *argv[]) {
     Mat warp_out = m.getCamFrame();
     Mat to_match; cvtColor(warp_out, to_match, CV_GRAY2RGB);
     if (my_pos.x < 0) {
-      resize(to_match, to_match,
-          Size(128, 128), 0.5,0.5, INTER_CUBIC);
-      std::vector<std::vector<Vec2i>> mmm = runMatching(to_match, src);
+      //resize(to_match, to_match,
+      //    Size(128, 128), 0.5,0.5, INTER_CUBIC);
+
+
+    Mat_<float> lala(warp_out.size());
+    matchTemplate(src, to_match, lala, CV_TM_CCOEFF_NORMED);
+    double minv; Point minIdx;
+    minMaxLoc(lala, NULL, &minv, NULL, &minIdx);
+    imshow("lala", lala);
+//    cout<<"LALA";
+//    cout << minIdx<<endl;
+
+        my_pos = Point2f(board_rect.x+((float)minIdx.x/src.size().width)*board_rect.width+m.cam_rect.width/2,
+                     board_rect.y+((float)minIdx.y/src.size().height)*board_rect.height+m.cam_rect.height/2);
+/*      std::vector<std::vector<Vec2i>> mmm = runMatching(to_match, src);
       if (mmm.size() > 0 && mmm[mmm.size()/2].size() > 0) {
         Point2f _p(mmm[mmm.size()/2][mmm[mmm.size()/2].size()/2]);
         //Point2f _p(mmm[0][0]);
@@ -137,7 +162,7 @@ int main(int argc, char *argv[]) {
 //                     board_rect.y+(_p.y/src.size().height)*board_rect.height);
         cout << _p << endl;
         my_pos = _p;
-      }
+      }*/
 
       old_frame = warp_out.clone();
     }
@@ -146,13 +171,14 @@ int main(int argc, char *argv[]) {
 //    imshow(source_window, src_gray);
     vector<Point2f> pts;
     vector<Point2f> old_pts;
-    imshow("asdfasd", old_frame);
+    //imshow("asdfasd", old_frame);
     goodFeaturesToTrack(warp_out, old_pts, 640, 0.35, 4);
 //    old_pts.insert(old_pts.end(), pts.begin(), pts.end());
     vector<unsigned char> status;
     vector<float> err;
     vector<Mat> pyr_a, pyr_b;
     buildOpticalFlowPyramid(old_frame, pyr_a, Size(22,22), 6);
+    old_frame = warp_out.clone();
     buildOpticalFlowPyramid(warp_out, pyr_b, Size(22,22), 6);
     try {
       calcOpticalFlowPyrLK(pyr_a, pyr_b, old_pts, pts, status, err);
@@ -187,15 +213,22 @@ int main(int argc, char *argv[]) {
       }
     }
     global_err /= cnt;
-    acc = Point2f((acc.x/cnt) / m.dpiX,
-        (acc.y/cnt) / m.dpiY);
+    acc = Point2f((acc.x/cnt) / (m.dpiX/2.54),
+        (acc.y/cnt) / (m.dpiY/2.54));
     cout << "GLOBAL VECT:" << acc << endl;
     if (!(isnan(acc.x) || isnan(acc.y))) {
       my_pos += acc;
     }
     cout << "GLOBAL POS:" << my_pos << endl;
     cout << "GLOBAL err:" << global_err<< endl;
-    if (global_err > 15) {waitKey(3000); my_pos = Point2f(-1,-1);};
+
+
+    Mat my_view = m.getFrameAt(my_pos.x, my_pos.y);
+    Mat_<float> lala(my_view.size());
+    matchTemplate(src_gray, my_view, lala, CV_TM_CCOEFF_NORMED);
+    double minv; Point minIdx;
+    minMaxLoc(lala, &minv, NULL, NULL, &minIdx);
+    if (global_err > 20) {waitKey(3); my_pos = Point2f(-1,-1);};
     m.points.push_back(my_pos);
     m.points2.push_back(m.getPos());
     old_pts = pts;
@@ -205,11 +238,11 @@ int main(int argc, char *argv[]) {
     cout << "|" << endl;
     cout << old_pts << endl;
 //      Canny(warp_out, warp_out, 15, 70);
-    imshow("chuj", warp_out);
+    //imshow("warp_out", warp_out);
 //    Mat bn = m.board.clone();
 //    rectangle(bn, pt_center - Point2f(c_s_x / 2, c_s_y / 2), pt_center + Point2f(c_s_x / 2, c_s_y / 2), 255, 2);
 //    imshow("chujo", bn);
-    old_frame = warp_out.clone();
+    //old_frame = warp_out.clone();
     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     if (r < 0.05) {
       float r1 = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
@@ -217,9 +250,9 @@ int main(int argc, char *argv[]) {
       g = Point2f(r1-0.5, r2-0.5);
     }
     r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    m.moveX(g.x*0.010+0.02*(r-0.5));
+    m.moveX(g.x*0.15+0.02*(r-0.5));
     r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    m.moveY(g.y*0.010+0.02*(r-0.5));
+    m.moveY(g.y*0.15+0.02*(r-0.5));
 
 
   };
