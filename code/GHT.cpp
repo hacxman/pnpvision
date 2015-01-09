@@ -109,6 +109,11 @@ public:
 		cvtColor(input_img, src_gray, CV_BGR2GRAY); 
 		blur( src_gray, detected_edges, Size(3,3) );
 		Canny( detected_edges, detected_edges, 1, 100, 3 );
+/*    for (int i=0; i<detected_edges.size().width; i+=2) {
+      for (int j=0; j<detected_edges.size().height; j+=2) {
+        line(detected_edges, Point2i(i,j), Point2i(i,j), Scalar(0,0,0), 1);
+      }
+    } */
 		imwrite("files/contour_rough.bmp", detected_edges);
 	}
 
@@ -235,7 +240,7 @@ public:
 
 
 	// show the best candidate detected on image
-	void bestCandidate(){
+ 	std::vector<std::vector<Vec2i>> bestCandidate(){
 		double minval;
 		double maxval;
 		int id_min[4] = { 0, 0, 0, 0};
@@ -247,7 +252,7 @@ public:
 		Mat	input_img2 = showimage.clone();
 
 		Vec2i referenceP = Vec2i(id_max[0]*rangeXY+(rangeXY+1)/2, id_max[1]*rangeXY+(rangeXY+1)/2);
-		
+
 		// rotate and scale points all at once. Then impress them on image
 		std::vector<std::vector<Vec2i>> Rtablerotatedscaled(intervals);
 		float deltaphi = pi/intervals;
@@ -256,7 +261,7 @@ public:
 		float cs = cos(reff*deltaphi);
 		float sn = sin(reff*deltaphi);
 		int w = wmin + id_max[2]*rangeS;
-		float wratio = (float)w/(wtemplate);	
+		float wratio = (float)w/(wtemplate);
 		for (std::vector<std::vector<Vec2i>>::size_type ii = 0; ii < Rtable.size(); ++ii){
 			for (std::vector<Vec2i>::size_type jj= 0; jj < Rtable[ii].size(); ++jj){
 				int iimod = (ii+reff) % intervals;
@@ -265,14 +270,16 @@ public:
 				int x = referenceP[0] - dx;
 				int y = referenceP[1] - dy;
 				//Rtablerotatedscaled[ii].push_back(Vec2i( dx, dy));
+				Rtablerotatedscaled[ii].push_back(Vec2i( x, y));
 				if ( (x<nc)&&(y<nl)&&(x>-1)&&(y>-1) ){
 					input_img2.at<Vec3b>(y, x) = Vec3b(0, 255, 255);
 				}
 			}
 		}
+    return Rtablerotatedscaled;
     //return;
 		// show result
-		bool alt = false; 
+		bool alt = false;
 		for(;;)
 		{
 			char c = (char)waitKey(750);
@@ -387,7 +394,7 @@ private:
 
 
 
-void runGHT(char c){
+std::vector<std::vector<Vec2i>> runGHT(char c){
 	//c = 't'; // create template
 	//c = 'r'; // run algorithm
 	if (c == 't'){   
@@ -405,11 +412,23 @@ void runGHT(char c){
 		//Mat detect_img = imread("files\\Img_03.png", 1);
 		ght.accumulate(detect_img);
     printf("accum done\n");
-		ght.bestCandidate();
+		return ght.bestCandidate();
 	}
 }
 
+std::vector<std::vector<Vec2i>> runMatching(Mat img, Mat board) {
+    imwrite("files/template_original.jpg", img);
+		GenHoughTrnf ght;
+		ght.createTemplate();
+		ght = GenHoughTrnf();
+    ght.createRtable();
+		ght.accumulate(board);
+		return ght.bestCandidate();
+}
+
+#if 0
 int main(void) {
   runGHT('t');
   runGHT('r');
 }
+#endif
