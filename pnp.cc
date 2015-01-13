@@ -31,7 +31,7 @@ class Machine {
     Point2f getPos() {return Point2f(x,y); };
 
     void renderMachine() {
-      int dpi = 35;
+      int dpi = 12;
       Mat mach = Mat::zeros(sx*dpi/2.54, sy*dpi/2.54, board.type());
       float bsx = (dpi / 2.54) / (board.size().width / b_pos.width);
       float bsy = (dpi / 2.54) / (board.size().height / b_pos.height);
@@ -105,12 +105,43 @@ class Machine {
     void goCenter() {x=sx/2; y=sy/2;};
 };
 
+enum State {
+  STATE_PROGRESS,
+  STATE_DONE
+};
+template <class Ctx>
+class Command {
+  State m_state;
+  Ctx m_ctx;
+  public:
+    Command(Ctx ctx) : m_ctx(ctx) {};
+    State getState() {return m_state;};
+    virtual void step();
+    virtual void step(float time, bool derivative = false);
+    bool isDone() {return m_state == STATE_DONE;};
+};
+
+class CmdGoXY : Command<Machine> {
+  Point pos;
+  public:
+    CmdGoXY(Point where); //: pos(where) {};
+    void step(float time, bool derivative = false) {
+
+    }
+};
+
+class Control {
+  public:
+    Ptr<Machine> m;
+    Control(Ptr<Machine> _m): m(_m) {};
+};
+
 int main(int argc, char *argv[]) {
   //start in center, in 1m^3
   srand(time(0));
   float __r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
   float __r2 = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-  Machine m = Machine(57+(__r*3),55+(__r2*3),50, 100, 100, 100, Rect(-1, 1, 2, 2));
+  Machine m = Machine(59+(__r*3),55+(__r2*3),50, 100, 100, 100, Rect(-1, 1, 2, 2));
   //Point2f my_pos(m.getPos().x, m.getPos().y);
   Point2f my_pos(-1,-1);
   Mat src_gray, src = imread(argv[1], 1);
@@ -123,6 +154,25 @@ int main(int argc, char *argv[]) {
 
   Mat old_frame;
   Point2f g(1,0);
+  KalmanFilter KF(6, 2, 0);
+  KF.transitionMatrix = *(Mat_<float>(6, 6) << 1,0,1,0,0,0,
+                                               0,1,0,1,0,0,
+                                               0,0,1,0,1,0,
+                                               0,0,0,1,0,1,
+                                               0,0,0,0,1,0,
+                                               0,0,0,0,0,1);
+  Mat_<float> measurement(2,1); measurement.setTo(Scalar(0));
+  // init...
+  KF.statePre.at<float>(0) = m.getPos().x;
+  KF.statePre.at<float>(1) = m.getPos().y;
+  KF.statePre.at<float>(2) = 0;
+  KF.statePre.at<float>(3) = 0;
+  KF.statePre.at<float>(4) = 0;
+  KF.statePre.at<float>(5) = 0;
+  setIdentity(KF.measurementMatrix);
+  setIdentity(KF.processNoiseCov, Scalar::all(1e-2));
+  setIdentity(KF.measurementNoiseCov, Scalar::all(1e-1));
+  setIdentity(KF.errorCovPost, Scalar::all(.00001));
   while (true) {
     m.renderMachine();
     switch (waitKey(1)) {
@@ -140,17 +190,16 @@ int main(int argc, char *argv[]) {
       //    Size(128, 128), 0.5,0.5, INTER_CUBIC);
 
 
-    Mat_<float> lala(warp_out.size());
+    /*Mat_<float> lala(warp_out.size());
     matchTemplate(src, to_match, lala, CV_TM_CCOEFF_NORMED);
     double minv; Point minIdx;
     minMaxLoc(lala, NULL, &minv, NULL, &minIdx);
-    imshow("lala", lala);
-//    cout<<"LALA";
-//    cout << minIdx<<endl;
+    imshow("lala", lala); 
 
         my_pos = Point2f(board_rect.x+((float)minIdx.x/src.size().width)*board_rect.width+m.cam_rect.width/2,
                      board_rect.y+((float)minIdx.y/src.size().height)*board_rect.height+m.cam_rect.height/2);
-/*      std::vector<std::vector<Vec2i>> mmm = runMatching(to_match, src);
+*/
+      std::vector<std::vector<Vec2i>> mmm = runMatching(to_match, src);
       if (mmm.size() > 0 && mmm[mmm.size()/2].size() > 0) {
         Point2f _p(mmm[mmm.size()/2][mmm[mmm.size()/2].size()/2]);
         //Point2f _p(mmm[0][0]);
@@ -162,7 +211,7 @@ int main(int argc, char *argv[]) {
 //                     board_rect.y+(_p.y/src.size().height)*board_rect.height);
         cout << _p << endl;
         my_pos = _p;
-      }*/
+      }
 
       old_frame = warp_out.clone();
     }
@@ -177,9 +226,9 @@ int main(int argc, char *argv[]) {
     vector<unsigned char> status;
     vector<float> err;
     vector<Mat> pyr_a, pyr_b;
-    buildOpticalFlowPyramid(old_frame, pyr_a, Size(22,22), 6);
+    buildOpticalFlowPyramid(old_frame, pyr_a, Size(21,21), 6);
     old_frame = warp_out.clone();
-    buildOpticalFlowPyramid(warp_out, pyr_b, Size(22,22), 6);
+    buildOpticalFlowPyramid(warp_out, pyr_b, Size(21,21), 6);
     try {
       calcOpticalFlowPyrLK(pyr_a, pyr_b, old_pts, pts, status, err);
     } catch (Exception &e) {
@@ -196,6 +245,12 @@ int main(int argc, char *argv[]) {
     Point2f acc = Point2f(0,0);
     float global_err = 0;
     float last_err = 10000;
+    Mat_<float> prediction = KF.predict();
+    Mat_<float> corrected;// = KF.correct(Mat(my_pos+acc));
+    int ML=0;
+    // todo: find minimum in err
+//    minMaxLoc(err, NULL, NULL, &ML, 0);
+    cout << "err chosen:" << err[ML] << endl;
     for (vector<Point2f>::iterator it=old_pts.begin(), it2=pts.begin() ; it != old_pts.end(); it++, it2++, it3++, it4++) {
       //circle(warp_out, *it, 5, 0);
       //circle(warp_out, *it, 5, 0);
@@ -204,6 +259,9 @@ int main(int argc, char *argv[]) {
           line(warp_out, *it, *it2, 0, 1);
           Point2f _p= (*it - *it2);
           if (isnan(_p.x) || isnan(_p.y)) continue;
+          //KF.predict();
+    //corrected = KF.correct(Mat(my_pos+Point2f((_p.x) / (m.dpiX/2.54),
+    //    (_p.y) / (m.dpiY/2.54))));
           acc += _p;
           cnt++;
           cout << "err:"; cout << (*it4) << endl;
@@ -215,15 +273,33 @@ int main(int argc, char *argv[]) {
     global_err /= cnt;
     acc = Point2f((acc.x/cnt) / (m.dpiX/2.54),
         (acc.y/cnt) / (m.dpiY/2.54));
+
+    corrected = KF.correct(Mat(my_pos+acc));
+        cout << Mat(acc) << endl;
+    cout << prediction << endl;
+    cout << corrected << endl;
     cout << "GLOBAL VECT:" << acc << endl;
     if (!(isnan(acc.x) || isnan(acc.y))) {
       my_pos += acc;
     }
-    cout << "GLOBAL POS:" << my_pos << endl;
+    //my_pos = Point(corrected.at<float>(0), corrected.at<float>(1));
+    cout << "GLOBAL my_POS:" << my_pos << endl;
+    cout << "GLOBAL POS:" << m.getPos() << endl;
     cout << "GLOBAL err:" << global_err<< endl;
 
 
-    Mat my_view = m.getFrameAt(my_pos.x, my_pos.y);
+    cout << my_pos << endl;
+    Mat my_view(m.getFrameAt(my_pos.x, my_pos.y));
+Mat hann;
+    Mat curr64f, prev64f;
+    cout << "sizes: " << warp_out.size() <<endl;
+createHanningWindow(hann, warp_out.size(), CV_64F);
+    warp_out.convertTo(prev64f, CV_64F);
+    my_view.convertTo(curr64f, CV_64F);
+    Point2f pC = phaseCorrelate(prev64f, curr64f, hann);
+    cout << "phaseCorrelate: " << pC <<endl;
+    //my_pos += pC*0.001;
+
     Mat_<float> lala(my_view.size());
     matchTemplate(src_gray, my_view, lala, CV_TM_CCOEFF_NORMED);
     double minv; Point minIdx;
@@ -250,9 +326,9 @@ int main(int argc, char *argv[]) {
       g = Point2f(r1-0.5, r2-0.5);
     }
     r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    m.moveX(g.x*0.15+0.02*(r-0.5));
+    m.moveX(g.x*0.15+0.002*(r-0.5));
     r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    m.moveY(g.y*0.15+0.02*(r-0.5));
+    m.moveY(g.y*0.15+0.002*(r-0.5));
 
 
   };
